@@ -1,0 +1,183 @@
+---
+title: "PML Final Project"
+author: "Pietro D'Ambrosio"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,verbose=FALSE)
+setwd("D:/$DMP2016/PRIV/COURSERA/CORSO8_MACHINE_LEARNING/project/")
+```
+
+## Abstract
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. The goal of this project is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which they did the exercise. 
+in this study we constructed different models and we evaluated their accuracy (by making a cross validation with k = 3)  to choose one of them. We then applied the final model to the 20 test cases to be submitted for automated grading.
+
+## Data 
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+```{r}
+training <- read.csv("pml-training.csv")
+testing  <- read.csv("pml-testing.csv")
+
+nr_train <- format(dim(training)[1],decimal.mark=",",big.mark=".")
+nc_train <- format(dim(training)[2],decimal.mark=",",big.mark=".")
+nr_test  <- format(dim(testing)[1],decimal.mark=",",big.mark=".")
+nc_test  <- format(dim(testing)[2],decimal.mark=",",big.mark=".")
+```
+
+The training data set contains **`r nr_train`** rows and the testing data set **`r nr_test`**.
+Both the files contains **`r nc_train`** variables.
+
+The "classe" variable in the training set is the outcome variable and contains a quality measure of activity (from "A" to "E"). The 5 different fashions are:
+
+- exactly according to the specification (Class A)
+- throwing the elbows to the front (Class B)
+- lifting the dumbbell only halfway (Class C)
+- lowering the dumbbell only halfway (Class D)
+- throwing the hips to the front (Class E)
+
+Through the exploratory analysis we will try to identify the set of variables useful in defining the predictive model.
+
+
+## Exploratory data analysis
+
+Observing the data,  we can see that there are some variables that have many NA values.
+Also there are some variables that contain constant or almost constant predictors (in some cases equal zero). We can eliminate these variables because they are not significant for the purposes of the model definition. 
+For this purpose we use the "nearZeroVar" (near-zero variance predictors) function of caret package. 
+Then in the training/testing data set there are 7 variables that describe characteristic of the subject who carried out the experiments. These variables will not be considered in the model construction.
+
+Below is a short list of variables contained in the data sets with an example of their content:
+
+```{r echo=TRUE}
+str(training)
+```
+
+## Cleaning data
+
+We start by eliminating all of the columns that are not significant for the purposes of the predictive model building. In particular:
+
+- the columns from 1 to 7 containing descriptive informations,
+- the columns that contain all NA values
+- all the columns with near zero variance.
+
+
+```{r warning=FALSE, message=FALSE}
+nvar1 <- dim(training)[2]
+
+# first seven columns
+col_1_7 <- -1:-7
+training <- training[,col_1_7] # eliminate columns from 1 to 7
+testing  <- testing[,col_1_7]  # eliminate columns from 1 to 7
+nvar2 <- dim(training)[2]
+
+# columns with all NAs
+wk_df  <- data.frame(sapply(training, function(y) sum(length(which(is.na(y))))))
+wk_df$var <- row.names(wk_df)
+names(wk_df) <- c("valore","var")
+col_na<- as.vector(wk_df[wk_df$valore > nrow(training)*3/4,]$var)
+training <- training[, !(colnames(training) %in% col_na)] # keep only columns with values != NAs
+testing  <- testing[, !(colnames(testing) %in% col_na)]  # keep only columns with values != NA
+nvar3 <- dim(training)[2]
+
+# columns with NZV
+library(caret)
+wk_nzv <- nearZeroVar(training,saveMetrics = TRUE) #saveMetrics = T returns a df with information
+col_nzv <- (wk_nzv$nzv == FALSE)
+training <- training[,col_nzv]  # keep only columns with nzv == FALSE
+testing  <- testing[,col_nzv]   # keep only columns with nzv == FALSE
+nvar4 <- dim(training)[2]
+```
+
+After these normalizations the number of variables that we will use for the definition of the model is reduced to **`r nvar4`** (including the "classe"  variable that represents our outcome).
+
+The variables on which to continue our analysis are the following:
+```{r echo=TRUE}
+str(training)
+```
+
+## Preparing Model Building
+Having to use the testing dataset (provided in input) for the calculation of the final result of the assignment, we create a new validation dataset
+by dividing the original "training" dataset into two subsets (respectively *sub_training* and *sub_testing*).
+
+``` {r warning=FALSE, message=FALSE, cache=TRUE}
+# subdivision training dataset in train and test data set for model building 
+set.seed(3109)
+library(AppliedPredictiveModeling)
+inTrain = createDataPartition(training$classe, p = 3/4)[[1]]
+sub_training = training[ inTrain,]
+sub_testing  = training[-inTrain,]
+n_subtra <- format(dim(sub_training)[1],decimal.mark=",",big.mark=".")[1]
+n_subtes <- format(dim(sub_testing)[1],decimal.mark=",",big.mark=".")[1]
+```
+
+Then we will use **`r n_subtra`** observations for training our model and **`r n_subtes`** for testing.
+
+## Model selection and cross-validation
+To select the most effective model , we will try to build different types of models , and will evaluate their accuracy. To avoid overfitting problems we apply a cross-validation technique with k = 3 (to save some elaboration time).
+
+``` {r warning=FALSE, message=FALSE}
+# setting cross-validation k to 3 
+control <- trainControl(method="cv",number=3,allowParallel=TRUE,verboseIter = FALSE)
+# this variable will be passed to "trControl"" parameter of train function (caret package)
+```
+
+In particular we will tray to use three method to build model:
+
+- Random Forest (rf)
+- Gradient Boosted Method  (gbm)
+- Linear Discriminant Analysis (lda)
+
+and show their accuracy.
+<br><br>
+
+##### Model rf - Random Forest 
+``` {r warning=FALSE, message=FALSE, cache=TRUE}
+fit_rf <- train(classe ~ ., method="rf", data=sub_training,trControl=control)
+pred_rf <- predict(fit_rf,sub_testing)
+confusionMatrix(sub_testing$classe, pred_rf)$overall['Accuracy']
+```
+<br>
+
+##### *Model gbm - Gradient Boosted Method*
+``` {r warning=FALSE, message=FALSE, cache=TRUE}
+fit_gbm <- train(classe ~ ., method="gbm", data=sub_training,trControl=control)
+pred_gbm <- predict(fit_gbm,sub_testing)
+confusionMatrix(sub_testing$classe, pred_gbm)$overall['Accuracy']
+```
+<br>
+
+##### * Model lda - Linear Discriminant Analysis *
+``` {r warning=FALSE, message=FALSE, cache=TRUE}
+fit_lda <- train(classe ~ ., method="lda", data=sub_training,trControl=control)
+pred_lda <- predict(fit_lda,sub_testing)
+confusionMatrix(sub_testing$classe, pred_lda)$overall['Accuracy']
+```
+
+Now let's see if a combined model has higher accuracy.
+<br>
+
+##### *Combined model (with rf method)*
+``` {r warning=FALSE, message=FALSE}
+pred_all_DF <- data.frame(pred_rf,pred_gbm,pred_lda,classe=sub_testing$classe)
+fit_all <- train(classe ~., method = "rf", data=pred_all_DF,trControl=control)
+pred_all <- predict(fit_all,pred_all_DF)
+confusionMatrix(sub_testing$classe, pred_all)$overall['Accuracy']
+```
+
+The combined model have the same accuracy obtained by the random forest model. Overall the accuracy measures of models show that the best method is the random forest then
+we will use this to make the prediction of the results on the original test data.
+
+### Conclusions
+So we apply the model "fit_rf" to the "testing" dataset to get the outcome to deliver.
+``` {r }
+pred_final <- predict(fit_rf,testing)
+as.data.frame(pred_final)
+```
+
